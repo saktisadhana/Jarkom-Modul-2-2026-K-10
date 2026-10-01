@@ -926,6 +926,9 @@ for N in vault core www static penny abbey obladi desmond oblada molly; do
 done
 ```
 
+![](alpha%20-%20verifikasi%20vault%20core%20cname.png)
+![](beta%20-%20verifikasi%20vault%20core%20cname.png)
+
 Dalam step ini kami menjalankan blok yang sama di `alpha` lalu di `beta`.
 
 	A=$(dig +short @192.216.1.2 $N.k10.com | sort | paste -sd ' ')
@@ -980,6 +983,9 @@ done
 named-checkconf && { { rndc reconfig && rndc reload; } > /dev/null 2>&1 || service named restart > /dev/null 2>&1 || service bind9 restart > /dev/null 2>&1; } && echo "prab OK: reverse zone 1, 2, 3"
 ```
 
+![](prab%20-%20konfigurasi%20reverse%20zone.png)
+![](prab%20-%20validasi%20reverse%20zone.png)
+
 Dalam step ini kami membuat tiga reverse zone di `prab`. Nama reverse zone dibuat dari bagian network IP yang urutannya dibalik, lalu ditambah `.in-addr.arpa`. Contohnya, network `192.216.1.0/24` menjadi `1.216.192.in-addr.arpa`.
 
 | Reverse zone | Network | Isi |
@@ -1017,6 +1023,8 @@ named-checkconf && { { rndc reconfig && for SEG in 1 2 3; do rndc retransfer $SE
 sleep 2; echo "tedd OK: reverse zone ditarik dari prab"
 ```
 
+![](tedd%20-%20transfer%20reverse%20zone.png)
+
 Dalam step ini kami mendaftarkan ketiga reverse zone di `tedd` sebagai slave dengan sumber `prab`, sama seperti zona `k10.com` di Soal 4.
 
 	rndc retransfer $SEG.216.192.in-addr.arpa
@@ -1036,6 +1044,8 @@ for S in 192.216.1.2 192.216.1.3; do
   done
 done
 ```
+
+![](tedd%20-%20reverse%20lookup%20abbey%20penny.png)
 
 Dalam step ini kami menanyakan PTR keenam IP ke `prab` dan `tedd`.
 
@@ -1094,6 +1104,9 @@ chmod -R a+rX /var/www/mesh-vault
 a2enmod autoindex > /dev/null; a2enconf k10-servername > /dev/null; a2ensite mesh-vault > /dev/null; a2dissite 000-default > /dev/null 2>&1
 apache2ctl configtest && apache2ctl -k graceful && echo "Apache OK"
 ```
+
+![](obladi%20-%20konfigurasi%20apache%20vault.png)
+![](obladi%20-%20struktur%20folder%20arsip.png)
 
 Dalam step ini kami menginstal Apache, membuat isi web, lalu menulis konfigurasi situs `vault.k10.com`.
 
@@ -1204,6 +1217,9 @@ for IP in 192.216.1.4 192.216.1.5; do
 done
 ```
 
+![](alpha%20-%20hostname%20vault%20terhubung.png)
+![](alpha%20-%20directory%20listing%20vault.png)
+
 Dalam step ini kami membuka `/arsip/` dari `alpha` memakai `curl`.
 
 	curl -s http://vault.k10.com/arsip/ | grep -oE '<title>[^<]*</title>|href="[a-z][^"]*"'
@@ -1270,6 +1286,8 @@ mkdir -p /run/php; service "php$V-fpm" restart > /dev/null 2>&1; sleep 1
 [ -S "/run/php/php$V-fpm.sock" ] || { "php-fpm$V" -D; sleep 1; }
 nginx -t && { nginx -s reload 2> /dev/null || nginx; } && sleep 1 && echo "nginx + PHP-FPM OK (php$V)"
 ```
+
+![](abbey%20-%20konfigurasi%20nginx%20core.png)
 
 Dalam step ini kami menginstal nginx dan PHP-FPM, membuat dua halaman PHP, lalu menulis konfigurasi situs `core.k10.com`. nginx tidak bisa menjalankan PHP sendiri, jadi file `.php` diteruskan ke PHP-FPM.
 
@@ -1384,6 +1402,8 @@ for IP in 192.216.1.6 192.216.1.7; do
 done
 ```
 
+![](alpha%20-%20pengujian%20core%20dan%20profil.png)
+
 Dalam step ini kami membuka beranda dan `/profil` dari `alpha`.
 
 	curl -s -w "HTTP %{http_code}\n" "http://core.k10.com$P" | grep -oE '<h1>[^<]*</h1>|Node: [a-z]+|HTTP [0-9]+'
@@ -1395,50 +1415,746 @@ Loop kedua memakai `--resolve` seperti di Soal 9, supaya `/profil` di `oblada` d
 ### Soal 11
 #### Brief Overview
 
+Membuat `penny` dan `abbey` menjadi reverse proxy sekaligus load balancer. `penny` membagi request ke backend vault (`obladi`, `desmond`), sedangkan `abbey` membagi request ke backend core (`oblada`, `molly`). Header `Host` dan IP asli client ikut diteruskan ke backend.
+
 #### Step by Step
+
+##### `obladi` & `desmond` : Konfigurasi Backend Vault
+
+Pada `obladi` dan `desmond` ditambahkan header pembuktian:
+
+```bash
+Header always set X-Backend "NAMA_BACKEND"
+Header always set X-Got-Host "expr=%{req:Host}"
+Header always set X-Got-Real-IP "expr=%{req:X-Real-IP}"
+```
+
+Konfigurasi juga menambahkan format log:
+
+```bash
+LogFormat "%h realip=%{X-Real-IP}i host=%{Host}i \"%r\" %>s" k10proof
+```
+
+Pada `obladi`, nilai `X-Backend` adalah `obladi`. Sedangkan pada `desmond`, nilainya `desmond`.
+
+Setelah konfigurasi dibuat, dilakukan pengecekan:
+
+```bash
+apache2ctl configtest
+```
+
+Hasil yang diharapkan:
+
+```
+Syntax OK
+Apache OK
+```
+
+![](obladi%20-%20konfigurasi%20backend%20vault.png)
+![](desmond%20-%20konfigurasi%20backend%20vault.png)
+
+##### `oblada` & `molly` : Konfigurasi Backend Core
+
+Pada `oblada` dan `molly` digunakan Nginx.
+
+Konfigurasi pembuktian menggunakan:
+
+```bash
+add_header X-Backend "NAMA_BACKEND" always;
+add_header X-Got-Host $host always;
+add_header X-Got-Real-IP $http_x_real_ip always;
+```
+
+Log juga dibuat menggunakan:
+
+```bash
+log_format k10proof
+'$remote_addr realip=$http_x_real_ip host=$host "$request" $status';
+
+access_log /var/log/nginx/k10-proof.log k10proof;
+```
+
+Pada `oblada`, identitas backend adalah `oblada`. Pada `molly`, identitasnya `molly`.
+
+Validasi dilakukan menggunakan:
+
+```bash
+nginx -t
+```
+
+Hasil:
+
+```
+nginx OK
+```
+
+![](oblada%20-%20konfigurasi%20backend%20core.png)
+![](molly%20-%20konfigurasi%20backend%20core.png)
+
+##### `penny` : Konfigurasi Reverse Proxy
+
+`penny` menggunakan Apache sebagai reverse proxy dan load balancer.
+
+Backend yang digunakan:
+
+```
+192.216.1.4  → obladi
+192.216.1.5  → desmond
+```
+
+Konfigurasi utama:
+
+```bash
+<Proxy "balancer://vault">
+    BalancerMember "http://192.216.1.4"
+    BalancerMember "http://192.216.1.5"
+    ProxySet lbmethod=byrequests
+</Proxy>
+
+ProxyPreserveHost On
+
+RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
+
+ProxyPass "/" "balancer://vault/"
+ProxyPassReverse "/" "balancer://vault/"
+```
+
+`ProxyPreserveHost On` digunakan agar informasi Host dari client tetap diteruskan ke backend.
+
+Sementara itu:
+
+```bash
+RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
+```
+
+digunakan untuk meneruskan IP asli client melalui header `X-Real-IP`.
+
+Pengecekan konfigurasi dilakukan dengan:
+
+```bash
+apache2ctl configtest
+```
+
+Hasil:
+
+```
+Syntax OK
+Apache OK
+```
+
+##### `abbey` : Konfigurasi Reverse Proxy
+
+`abbey` menggunakan Nginx sebagai reverse proxy.
+
+Backend:
+
+```
+192.216.1.6 → oblada
+192.216.1.7 → molly
+```
+
+Konfigurasi:
+
+```bash
+upstream core_backend {
+    zone core_backend 64k;
+    server 192.216.1.6;
+    server 192.216.1.7;
+}
+
+server {
+    listen 80 default_server;
+    server_name static.k10.com abbey.k10.com;
+
+    location / {
+        proxy_pass http://core_backend;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        add_header X-Gateway "abbey" always;
+    }
+}
+```
+
+Validasi:
+
+```bash
+nginx -t
+```
+
+Hasil:
+
+```
+nginx OK
+```
+
+##### `alpha` : Pengujian Penny
+
+```bash
+for i in 1 2 3 4 5 6; do
+    curl -s -o /dev/null -D - http://www.k10.com/ |
+    tr -d '\r' |
+    grep -iE '^x-(gateway|backend|got-real-ip|got-host)' |
+    paste -sd ' ';
+done
+```
+
+##### `alpha` : Pengujian Abbey
+
+```bash
+for i in 1 2 3 4 5 6; do
+    curl -s -o /dev/null -D - http://static.k10.com/ |
+    tr -d '\r' |
+    grep -iE '^x-(gateway|backend|got-real-ip|got-host)' |
+    paste -sd ' ';
+done
+```
 
 ### Soal 12
 #### Brief Overview
 
+Melindungi path `/admin` di `penny` dengan Basic Authentication untuk user `prabs`.
+
 #### Step by Step
+
+##### `penny` : Konfigurasi Basic Auth `/admin`
+
+![](penny%20-%20konfigurasi%20basic%20auth%20admin.png)
+
+##### `alpha` : Pengujian `/admin`
+
+Tanpa kredensial:
+
+```bash
+curl -s -o /dev/null -w "tanpa kredensial -> %{http_code}\n" \
+http://www.k10.com/admin/
+```
+
+Hasil:
+
+```
+tanpa kredensial -> 401
+```
+
+Password salah:
+
+```bash
+curl -s -o /dev/null -w "password salah -> %{http_code}\n" \
+-u 'prabs:salah' http://www.k10.com/admin/
+```
+
+Hasil:
+
+```
+password salah -> 401
+```
+
+Kredensial benar:
+
+```bash
+curl -s -o /dev/null -w "prabs + password benar -> %{http_code}\n" \
+-u 'prabs:pakar_pinter_jadi_gob***' \
+http://www.k10.com/admin/
+```
+
+Hasil:
+
+```
+prabs + password benar -> 200
+```
+
+Isi halaman:
+
+```html
+<h1>Dokumen Rahasia Sindikat</h1>
+<p>Hanya untuk prabs.</p>
+```
+
+![](alpha%20-%20pengujian%20admin.png)
+
+Hasil 401 ketika tidak terdapat kredensial atau password salah menunjukkan bahwa resource `/admin` terlindungi Basic Authentication. Status 200 setelah kredensial benar menunjukkan bahwa autentikasi berhasil.
 
 ### Soal 13
 #### Brief Overview
 
+Mengalihkan akses ke IP atau nama asli `penny` menuju `www.k10.com` (301), dan akses ke IP atau nama asli `abbey` menuju `static.k10.com` (302).
+
 #### Step by Step
+
+##### `penny` : Redirect 301
+
+`penny` diarahkan secara permanen menuju `www.k10.com` menggunakan status `301 Moved Permanently`.
+
+Contoh:
+
+```
+http://192.216.3.2/
+        ↓
+301
+        ↓
+http://www.k10.com/
+```
+
+Path juga dipertahankan:
+
+```
+http://penny.k10.com/arsip/
+        ↓
+301
+        ↓
+http://www.k10.com/arsip/
+```
+
+##### `abbey` : Redirect 302
+
+`abbey` menggunakan redirect sementara (`302 Found`) dengan tujuan `static.k10.com`.
+
+Contoh:
+
+```
+http://192.216.2.2/
+        ↓
+302
+        ↓
+http://static.k10.com/
+```
+
+dan:
+
+```
+http://abbey.k10.com/profil
+        ↓
+302
+        ↓
+http://static.k10.com/profil
+```
+
+##### `alpha` : Pengujian
+
+```bash
+for URL in \
+http://192.216.3.2/ \
+http://penny.k10.com/ \
+http://penny.k10.com/arsip/ \
+http://192.216.2.2/ \
+http://abbey.k10.com/ \
+http://abbey.k10.com/profil \
+http://www.k10.com/ \
+http://static.k10.com/; do
+
+printf '%-30s -> %s\n' "$URL" \
+"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$URL")"
+
+done
+```
+
+![](penny%20-%20konfigurasi%20redirect%20301.png)
+![](abbey%20-%20konfigurasi%20redirect%20302.png)
 
 ### Soal 14
 #### Brief Overview
 
+Membuat access log backend mencatat IP asli client, bukan hanya IP gateway.
+
 #### Step by Step
+
+##### `obladi`, `desmond`, `oblada`, `molly` : Konfigurasi
+
+Backend vault menggunakan modul `mod_remoteip`, sedangkan backend core menggunakan mekanisme `real_ip` pada Nginx.
+
+Pada vault:
+
+```bash
+RemoteIPHeader X-Real-IP
+RemoteIPInternalProxy 192.216.3.2
+```
+
+Pada core:
+
+```bash
+set_real_ip_from 192.216.2.2;
+real_ip_header X-Real-IP;
+```
+
+Gateway yang dipercaya:
+
+```
+Penny → 192.216.3.2
+Abbey → 192.216.2.2
+```
+
+##### `alpha` : Kirim request lewat gateway
+
+Dari `alpha` dikirim beberapa request:
+
+```bash
+for i in 1 2 3 4; do
+    curl -s -o /dev/null http://www.k10.com/
+    curl -s -o /dev/null http://static.k10.com/
+done
+
+echo "8 request terkirim"
+```
+
+##### `obladi`/`desmond` & `oblada`/`molly` : Cek log
+
+Kemudian log backend diperiksa.
+
+Vault:
+
+```bash
+tail -n 4 /var/log/apache2/mesh-vault-access.log
+```
+
+Core:
+
+```bash
+tail -n 4 /var/log/nginx/mesh-core-access.log
+```
+
+Contoh hasil:
+
+```
+192.216.4.2 ... "GET / HTTP/1.1" 200 ... via=192.216.3.2
+```
+
+dan:
+
+```
+192.216.4.2 ... "GET / HTTP/1.0" 200 ... via=192.216.2.2
+```
+
+Kolom pertama menunjukkan IP asli client, yaitu `192.216.4.2`. Sedangkan bagian `via=` menunjukkan gateway yang digunakan: `via=192.216.3.2` untuk vault dan `via=192.216.2.2` untuk core.
+
+Dengan demikian, backend dapat mencatat IP asli client sekaligus mengetahui request tersebut datang melalui gateway yang sesuai.
+
+![](obladi%20-%20bukti%20log%20ip%20asli.png)
+![](desmond%20-%20bukti%20log%20ip%20asli.png)
 
 ### Soal 15
 #### Brief Overview
 
+Path `/eternal` di `penny` dan `/orion` di `abbey` dilayani langsung oleh gerbangnya sendiri, tidak diteruskan ke backend. `/eternal` menjalankan PHP, sedangkan `/orion` hanya menyajikan file secara statis.
+
 #### Step by Step
+
+##### `penny` : `/eternal`
+
+![](penny%20-%20konfigurasi%20eternal.png)
+
+Path `/eternal` dilayani langsung oleh `penny` dan tidak diteruskan ke backend.
+
+`penny` menjalankan PHP melalui Apache, dengan isi folder:
+
+```
+/var/www/eternal
+```
+
+File:
+
+```
+info.php
+catatan.txt
+```
+
+Pengujian:
+
+```bash
+curl -s http://www.k10.com/eternal/
+```
+
+dan:
+
+```bash
+curl -s http://www.k10.com/eternal/info.php
+```
+
+Hasil:
+
+```
+PHP DIEKSEKUSI di penny (PHP 8.x), waktu ...
+```
+
+Hal ini menunjukkan bahwa PHP diproses oleh `penny`.
+
+##### `abbey` : `/orion`
+
+![](abbey%20-%20konfigurasi%20orion.png)
+
+Path `/orion` juga dilayani langsung oleh `abbey`. Namun, berbeda dari `/eternal`, `abbey` hanya menyajikan file secara statis.
+
+Pengujian:
+
+```bash
+curl -s http://static.k10.com/orion/
+```
+
+dan:
+
+```bash
+curl -s http://static.k10.com/orion/info.php
+```
+
+Hasil:
+
+```
+<?php echo "Kalau kalimat ini terlihat bersama tag php, berarti TIDAK dieksekusi"; ?>
+```
+
+![](alpha%20-%20pengujian%20eternal%20dan%20orion.png)
 
 ### Soal 16
 #### Brief Overview
 
+Melakukan stress test ke `www.k10.com` dan `static.k10.com` memakai ApacheBench (`ab`) dari `alpha`, dengan 250 request dan concurrency 10.
+
 #### Step by Step
+
+##### `alpha` : Pengujian
+
+```bash
+for URL in \
+http://www.k10.com/ \
+http://static.k10.com/; do
+
+echo "================ $URL ================"
+
+ab -l -n 250 -c 10 "$URL" 2> /dev/null |
+grep -E '^(Server Software|Concurrency Level|Time taken|Complete requests|Failed requests|Non-2xx|Requests per second|Time per request|Transfer rate)'
+
+done
+```
+
+Hasil yang diharapkan untuk Penny:
+
+```
+Server Software: Apache/2.4.x
+Concurrency Level: 10
+Complete requests: 250
+Failed requests: 0
+Requests per second: ... [#/sec]
+```
+
+Untuk Abbey:
+
+```
+Server Software: nginx/1.x
+Concurrency Level: 10
+Complete requests: 250
+Failed requests: 0
+Requests per second: ... [#/sec]
+```
+
+![](alpha%20-%20stress%20test%20ab.png)
 
 ### Soal 17
 #### Brief Overview
 
+Menambahkan TXT record untuk `alpha`, `beta`, `gamma`, `delta`, dan `epsilon` di `prab`, lalu memastikan `tedd` ikut menyalinnya.
+
 #### Step by Step
+
+##### `prab` : Konfigurasi TXT record
+
+Pada DNS master `prab` ditambahkan TXT record untuk `alpha`, `beta`, `gamma`, `delta`, dan `epsilon`:
+
+```bash
+alpha IN TXT "alpha"
+beta IN TXT "beta"
+gamma IN TXT "gamma"
+delta IN TXT "delta"
+epsilon IN TXT "epsilon"
+```
+
+Serial SOA dinaikkan agar perubahan dapat disinkronkan oleh `tedd`.
+
+##### `alpha` : Pengujian
+
+```bash
+for H in alpha beta gamma delta epsilon; do
+    printf '%-8s prab=%-10s tedd=%s\n' \
+    "$H" \
+    "$(dig +short @192.216.1.2 $H.k10.com TXT)" \
+    "$(dig +short @192.216.1.3 $H.k10.com TXT)"
+done
+```
+
+![](alpha%20-%20pengujian%20txt%20record.png)
+![](prab%20-%20konfigurasi%20txt%20record.png)
 
 ### Soal 18
 #### Brief Overview
 
+Menguji pengaruh TTL terhadap cache DNS. Record `abbey.k10.com` diatur dengan TTL 15 detik, lalu IP-nya diganti dari `192.216.2.2` ke IP fiktif `10.x.x.x`.
+
 #### Step by Step
+
+##### `alpha` : Pengujian tiga fase
+
+Pengujian memperlihatkan tiga fase.
+
+Fase 1 — Sebelum perubahan:
+
+```
+prab=192.216.2.2
+cache=192.216.2.2
+ttl=12
+FASE 1: sebelum perubahan
+```
+
+Fase 2 — DNS authoritative sudah berubah, cache masih lama:
+
+```
+prab=10.124.160.79
+cache=192.216.2.2
+ttl=9
+FASE 2: baru berubah, cache masih IP lama
+```
+
+Fase 3 — TTL habis:
+
+```
+prab=10.124.160.79
+cache=10.124.160.79
+ttl=15
+FASE 3: TTL habis, cache ikut IP baru
+```
+
+IP pada fase 2 dan 3 dapat berbeda karena IP fiktif dibuat secara acak.
+
+![](alpha%20-%20pengujian%20ttl%20tiga%20fase.png)
 
 ### Soal 19
 #### Brief Overview
 
+Membuat `outbound.k10.com` sebagai CNAME menuju `http.badssl.com`.
+
 #### Step by Step
+
+##### Konfigurasi
+
+Record `outbound.k10.com` dibuat sebagai CNAME menuju `http.badssl.com`:
+
+```bash
+outbound IN CNAME http.badssl.com.
+```
+
+##### Verifikasi DNS
+
+```bash
+dig +noall +answer outbound.k10.com
+```
+
+Hasil:
+
+```
+outbound.k10.com. 3600 IN CNAME http.badssl.com.
+```
+
+##### Pengujian
+
+```bash
+curl -s http://outbound.k10.com/ > /tmp/outbound.html
+curl -s http://http.badssl.com/ > /tmp/badssl.html
+```
+
+Jika diperlukan, request diulang dengan:
+
+```bash
+curl -s -H "Host: http.badssl.com" \
+http://outbound.k10.com/ > /tmp/outbound.html
+```
+
+Hasil yang diharapkan menunjukkan bahwa isi halaman dapat dibandingkan dengan `http.badssl.com`.
+
+![](prab%20-%20cname%20outbound.png)
 
 ### Soal 20
 #### Brief Overview
 
+Konfigurasi autostart dibuat agar service dan konfigurasi penting dapat kembali aktif ketika node GNS3 dinyalakan kembali.
+
 #### Step by Step
 
+##### Konfigurasi `autostart.sh`
+
+Karena node GNS3 berbasis Docker tidak selalu menjalankan systemd seperti VM penuh, dibuat script `/root/autostart.sh` dan hook pada `/root/.bashrc`.
+
+Pada node web seperti `obladi`, `desmond`, `oblada`, `molly`, `penny`, dan `abbey`, script mengembalikan IP, gateway, DNS, serta menjalankan service web masing-masing.
+
+Contoh pada `penny`:
+
+```bash
+#!/bin/bash
+
+IP=192.216.3.2
+GW=192.216.3.1
+
+ip link set eth0 up
+ip addr replace $IP/24 dev eth0
+ip route replace default via $GW dev eth0
+
+printf 'nameserver 192.216.1.2\nnameserver 192.216.1.3\nnameserver 192.168.122.1\n' > /etc/resolv.conf
+
+apache2ctl configtest > /dev/null 2>&1 &&
+apache2ctl -k graceful > /dev/null 2>&1 ||
+apache2ctl -k start > /dev/null 2>&1
+```
+
+Pada `abbey`, service yang dijalankan adalah Nginx.
+
+##### Autostart
+
+Setelah script dibuat:
+
+```bash
+chmod +x /root/autostart.sh
+```
+
+Hook juga ditambahkan pada `/root/.bashrc` agar script dijalankan satu kali ketika node mulai aktif.
+
+Setelah itu seluruh node direstart melalui GNS3.
+
+##### `alpha` : Verifikasi setelah restart
+
+Pada `alpha` dilakukan pengecekan ulang. Contoh reverse proxy:
+
+```bash
+for U in www static; do
+    for i in 1 2; do
+        curl -s -o /dev/null -D - \
+        http://$U.k10.com/ |
+        tr -d '\r' |
+        grep -iE '^x-(gateway|backend|got-real-ip)' |
+        paste -sd ' ';
+    done
+done
+```
+
+Hasil menunjukkan:
+
+```
+X-Gateway: penny
+X-Backend: obladi
+X-Got-Real-IP: 192.216.4.2
+
+X-Gateway: penny
+X-Backend: desmond
+X-Got-Real-IP: 192.216.4.2
+```
+
+dan:
+
+```
+X-Backend: oblada
+X-Got-Real-IP: 192.216.4.2
+X-Gateway: abbey
+
+X-Backend: molly
+X-Got-Real-IP: 192.216.4.2
+X-Gateway: abbey
+```
+
+DNS dan service lainnya juga diverifikasi kembali.
